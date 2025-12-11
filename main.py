@@ -153,7 +153,7 @@ async def upload_handler(client, message):
                 disable_web_page_preview=True
             )
             
-            except Exception as e:
+        except Exception as e:
             # Error ko string mein convert karke print karega
             error_message = str(e)
             print(f"ERROR LOG: {error_message}") # Render logs mein dikhega
