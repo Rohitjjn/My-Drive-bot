@@ -153,11 +153,17 @@ async def upload_handler(client, message):
                 disable_web_page_preview=True
             )
             
-        except Exception as e:
-            await status_msg.edit(f"❌ **Error:** {e}")
-            # Agar error aaye to bhi local file delete karo
+            except Exception as e:
+            # Error ko string mein convert karke print karega
+            error_message = str(e)
+            print(f"ERROR LOG: {error_message}") # Render logs mein dikhega
+            
+            # Telegram par bhejega
+            await status_msg.edit(f"❌ **Error Aaya Hai:**\n\n`{error_message}`")
+            
             if os.path.exists(save_path):
                 os.remove(save_path)
+                
 
 # --- DELETE BUTTON CALLBACK ---
 @app.on_callback_query(filters.regex(r"^del_"))
