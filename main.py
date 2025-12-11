@@ -199,3 +199,34 @@ if __name__ == "__main__":
     print("Bot Started...")
     app.run()
   
+# --- STATS COMMAND (Storage Check Karne Ke Liye) ---
+@app.on_message(filters.command("stats") & filters.user(ADMIN_ID))
+async def stats_handler(client, message):
+    status_msg = await message.reply_text("📊 **Checking Storage Info...**")
+    
+    try:
+        # Google Drive se puchte hain ki kitna space bacha hai
+        about = drive_service.about().get(fields="storageQuota").execute()
+        quota = about.get('storageQuota', {})
+        
+        limit = int(quota.get('limit', 0))
+        usage = int(quota.get('usage', 0))
+        usage_drive = int(quota.get('usageInDrive', 0))
+        usage_trash = int(quota.get('usageInDriveTrash', 0))
+        
+        # Percentage nikalte hain
+        percent = (usage / limit) * 100 if limit > 0 else 0
+        
+        text = (
+            f"📊 **Drive Storage Status:**\n\n"
+            f"💿 **Total Space:** {humanbytes(limit)}\n"
+            f"📦 **Used Space:** {humanbytes(usage)} ({round(percent, 2)}%)\n"
+            f"🗑️ **Trash Size:** {humanbytes(usage_trash)}\n\n"
+            f"ℹ️ *Note: Agar Trash size zyada hai, to /clean command use karein.*"
+        )
+        
+        await status_msg.edit(text)
+        
+    except Exception as e:
+        await status_msg.edit(f"❌ Error fetching stats: {e}")
+        
