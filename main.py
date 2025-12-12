@@ -26,7 +26,6 @@ GDRIVE_FOLDER_ID = os.environ.get("GDRIVE_FOLDER_ID")
 GDRIVE_TOKEN_CONTENT = os.environ.get("GDRIVE_TOKEN")
 
 # --- 3. GOOGLE DRIVE AUTH (PERSONAL TOKEN) ---
-# Hum seedha Token string use karenge, file banane ki zaroorat nahi
 try:
     token_dict = json.loads(GDRIVE_TOKEN_CONTENT)
     creds = Credentials.from_authorized_user_info(token_dict)
@@ -92,7 +91,7 @@ async def stats_handler(client, message):
             f"✅ **Account:** Authorized via Token"
         )
     except Exception as e:
-        await message.reply_text(f"❌ Error fetching stats: {e}")
+        await message.reply_text(f"❌ Error: {e}")
 
 # --- UPLOAD HANDLER ---
 @app.on_message(filters.user(ADMIN_ID) & (filters.document | filters.video))
@@ -127,27 +126,40 @@ async def upload_handler(client, message):
             
             file = drive_service.files().create(body=file_metadata, media_body=media, fields='id, webContentLink').execute()
             
-            # 3. Cleanup
+            # 3. Cleanup Local
             if os.path.exists(save_path): os.remove(save_path)
             
             # 4. Success Message
-            keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🗑️ Delete from Drive", callback_data=f"del_{file.get('id')}") ]])
+            keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Delete from Drive", callback_data=f"del_{file.get('id')}") ]])
             await status_msg.edit(f"✅ **Upload Complete!**\n\n📂 `{file_name}`\n🔗 [Download Link]({file.get('webContentLink')})", reply_markup=keyboard)
             
         except Exception as e:
             await status_msg.edit(f"❌ **Error:** {e}")
             if os.path.exists(save_path): os.remove(save_path)
 
-# --- DELETE BUTTON ---
+# --- IMPROVED DELETE BUTTON HANDLER ---
 @app.on_callback_query(filters.regex(r"^del_"))
 async def delete_callback(client, callback_query):
     file_id = callback_query.data.split("_")[1]
+    
     try:
+        # Step 1: Google Drive se delete karo
         drive_service.files().delete(fileId=file_id).execute()
-        await callback_query.answer("Deleted!", show_alert=True)
-        await callback_query.message.edit_text("🗑️ **File Permanently Deleted.**")
+        
+        # Step 2: User ko Popup dikhao
+        await callback_query.answer("🗑️ File permanently delete ho gayi!", show_alert=True)
+        
+        # Step 3: Telegram Message ko DELETE kar do (Gayab kar do)
+        await callback_query.message.delete()
+        
     except Exception as e:
-        await callback_query.answer(f"Error: {e}", show_alert=True)
+        # Agar file pehle hi delete ho chuki hai (404 Not Found), tab bhi message delete kar do
+        error_str = str(e)
+        if "404" in error_str or "File not found" in error_str:
+            await callback_query.answer("⚠️ File pehle hi delete ho chuki thi.", show_alert=True)
+            await callback_query.message.delete()
+        else:
+            await callback_query.answer(f"❌ Error deleting file: {error_str}", show_alert=True)
 
 # --- FAKE SERVER (KEEP ALIVE) ---
 flask_app = Flask(__name__)
@@ -162,4 +174,4 @@ if __name__ == "__main__":
     t.start()
     print("Bot Started...")
     app.run()
-    
+        
