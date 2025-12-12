@@ -130,6 +130,7 @@ async def upload_handler(client, message):
             if os.path.exists(save_path): os.remove(save_path)
             
             # 4. Success Message
+            # FIX: Inline Button ab file ID ko sahi format me bhejega
             keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Delete from Drive", callback_data=f"del_{file.get('id')}") ]])
             await status_msg.edit(f"✅ **Upload Complete!**\n\n📂 `{file_name}`\n🔗 [Download Link]({file.get('webContentLink')})", reply_markup=keyboard)
             
@@ -137,10 +138,12 @@ async def upload_handler(client, message):
             await status_msg.edit(f"❌ **Error:** {e}")
             if os.path.exists(save_path): os.remove(save_path)
 
-# --- IMPROVED DELETE BUTTON HANDLER ---
+# --- FIXED DELETE BUTTON HANDLER ---
 @app.on_callback_query(filters.regex(r"^del_"))
 async def delete_callback(client, callback_query):
-    file_id = callback_query.data.split("_")[1]
+    # MAIN FIX: Pehle split("_") tha jo galti kar raha tha.
+    # Ab 'del_' (4 chars) hata kar jo bachega wo poori ID hogi.
+    file_id = callback_query.data[4:]
     
     try:
         # Step 1: Google Drive se delete karo
@@ -149,17 +152,18 @@ async def delete_callback(client, callback_query):
         # Step 2: User ko Popup dikhao
         await callback_query.answer("🗑️ File permanently delete ho gayi!", show_alert=True)
         
-        # Step 3: Telegram Message ko DELETE kar do (Gayab kar do)
+        # Step 3: Telegram Message ko DELETE kar do
         await callback_query.message.delete()
         
     except Exception as e:
-        # Agar file pehle hi delete ho chuki hai (404 Not Found), tab bhi message delete kar do
         error_str = str(e)
+        
+        # Agar file pehle hi delete ho chuki hai (404 Error), tab bhi message delete kar do
         if "404" in error_str or "File not found" in error_str:
             await callback_query.answer("⚠️ File pehle hi delete ho chuki thi.", show_alert=True)
             await callback_query.message.delete()
         else:
-            await callback_query.answer(f"❌ Error deleting file: {error_str}", show_alert=True)
+            await callback_query.answer(f"❌ Error: {error_str}", show_alert=True)
 
 # --- FAKE SERVER (KEEP ALIVE) ---
 flask_app = Flask(__name__)
@@ -174,4 +178,4 @@ if __name__ == "__main__":
     t.start()
     print("Bot Started...")
     app.run()
-        
+    
