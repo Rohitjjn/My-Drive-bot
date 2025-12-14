@@ -113,7 +113,6 @@ async def progress_func(current, total, start_time, status_msg, file_name):
         speed = current / diff
         elapsed_time = round(diff) * 1000
         time_to_completion = round((total - current) / speed) * 1000
-        estimated_total_time = elapsed_time + time_to_completion
         
         # Visual Bar [■■■□□□]
         filled_length = int(10 * current // total)
@@ -131,7 +130,7 @@ async def progress_func(current, total, start_time, status_msg, file_name):
         except:
             pass
 
-# --- STATS COMMAND (UPDATED WITH FILE COUNT) ---
+# --- STATS COMMAND ---
 @app.on_message(filters.command("stats") & filters.user(AUTH_USERS))
 async def stats_handler(client, message):
     user_id = message.from_user.id
@@ -143,11 +142,8 @@ async def stats_handler(client, message):
 
     status_msg = await message.reply_text("📊 **Calculating Stats & Files...**")
     
-    # Identify User Name
     user_name = "User 1" if user_id == ADMIN_1_ID else "User 2"
-    
-    # Data fetch logic
-    acc_id = allowed_ids[0] # Humare case me har user ka 1 hi account hai
+    acc_id = allowed_ids[0] 
     
     if acc_id in tokens_map:
         account = tokens_map[acc_id]
@@ -160,48 +156,97 @@ async def stats_handler(client, message):
             limit = int(quota.get('limit', 0))
             usage = int(quota.get('usage', 0))
             free = limit - usage
-            
             used_percent = (usage / limit) * 100 if limit > 0 else 0
-            free_percent = 100 - used_percent
             
-            # 2. File Count Logic (Loop to count files in folder)
+            # 2. File Count
             file_count = 0
             page_token = None
             query = f"'{target_folder}' in parents and trashed = false"
-            
             while True:
-                response = service.files().list(
-                    q=query,
-                    spaces='drive',
-                    fields='nextPageToken, files(id)',
-                    pageToken=page_token
-                ).execute()
-                
+                response = service.files().list(q=query, spaces='drive', fields='nextPageToken, files(id)', pageToken=page_token).execute()
                 files = response.get('files', [])
                 file_count += len(files)
-                
                 page_token = response.get('nextPageToken')
-                if not page_token:
-                    break
+                if not page_token: break
             
-            # 3. Final Output Format
             stats_text = (
                 f"📊 👤 **Stats for {user_name}:**\n\n"
                 f"💿 **Total:** {humanbytes(limit)}\n"
                 f"📦 **Used:** {humanbytes(usage)} ({round(used_percent, 2)}%)\n"
-                f"📦 **Free:** {humanbytes(free)} ({round(free_percent, 2)}%)\n"
+                f"📦 **Free:** {humanbytes(free)} ({round(100-used_percent, 2)}%)\n"
                 f"✅ **Total Files in Drive:** {file_count}"
             )
-            
             await status_msg.edit(stats_text)
-            
         except Exception as e:
             await status_msg.edit(f"❌ Error fetching stats: {e}")
     else:
         await status_msg.edit("❌ Account not connected.")
 
+# --- NEW: FILES COMMAND (List All Files) ---
+@app.on_message(filters.command("files") & filters.user(AUTH_USERS))
+async def list_files_handler(client, message):
+    user_id = message.from_user.id
+    target_folder, allowed_ids = get_user_config(user_id)
+    
+    if not target_folder:
+        await message.reply_text("❌ Config Error.")
+        return
 
-# --- UPLOAD HANDLER (UPDATED PROGRESS) ---
+    status_msg = await message.reply_text("🔍 **Fetching File List...**\n(Please wait)")
+    
+    acc_id = allowed_ids[0]
+    if acc_id in tokens_map:
+        account = tokens_map[acc_id]
+        try:
+            service = account['service']
+            files_found = []
+            page_token = None
+            
+            # Fetch all files (name, id, size, link)
+            query = f"'{target_folder}' in parents and trashed = false"
+            while True:
+                response = service.files().list(
+                    q=query,
+                    spaces='drive',
+                    fields='nextPageToken, files(id, name, size, webContentLink)',
+                    pageToken=page_token
+                ).execute()
+                files_found.extend(response.get('files', []))
+                page_token = response.get('nextPageToken')
+                if not page_token: break
+            
+            if not files_found:
+                await status_msg.edit("📂 **Folder is Empty!**")
+                return
+
+            await status_msg.edit(f"✅ Found {len(files_found)} files. Listing below...")
+            
+            # Send each file as a separate message
+            for file in files_found:
+                f_name = file.get('name', 'Unknown')
+                f_id = file.get('id')
+                f_link = file.get('webContentLink', '#')
+                f_size = int(file.get('size', 0))
+                
+                text = (
+                    f"📂 `{f_name}`\n"
+                    f"💾 **File Size:** {humanbytes(f_size)}\n"
+                    f"🔗 [Download Link]({f_link})"
+                )
+                
+                await message.reply_text(
+                    text,
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Delete from Drive", callback_data=f"del_{f_id}")]])
+                )
+                # Anti-flood sleep (thoda gap taaki telegram block na kare)
+                time.sleep(0.5)
+
+        except Exception as e:
+            await message.reply_text(f"❌ Error listing files: {e}")
+    else:
+        await status_msg.edit("❌ Account not connected.")
+
+# --- UPLOAD HANDLER ---
 @app.on_message(filters.user(AUTH_USERS) & (filters.document | filters.video))
 async def upload_handler(client, message):
     status_msg = await message.reply_text("⏳ **Preparing...**")
@@ -224,33 +269,30 @@ async def upload_handler(client, message):
         return
         
     async with upload_semaphore:
-        # Initial Message
         await status_msg.edit(f"🚀 **Starting Upload...**\nAccount: {email_used}")
-        
         save_path = f"downloads/{file_name}"
         if not os.path.exists("downloads"): os.makedirs("downloads")
 
         try:
             start_time = time.time()
-            # Pass file_name to progress_func
-            await message.download(
-                save_path, 
-                progress=progress_func, 
-                progress_args=(start_time, status_msg, file_name)
-            )
+            await message.download(save_path, progress=progress_func, progress_args=(start_time, status_msg, file_name))
             
             await status_msg.edit(f"📤 **Finalizing Upload to Drive...**")
             
             file_metadata = {'name': file_name, 'parents': [target_folder_id]}
             media = MediaIoBaseUpload(open(save_path, 'rb'), mimetype=message.video.mime_type if message.video else message.document.mime_type, resumable=True)
             
-            file = best_service.files().create(body=file_metadata, media_body=media, fields='id, webContentLink').execute()
+            file = best_service.files().create(body=file_metadata, media_body=media, fields='id, webContentLink, size').execute()
             
             if os.path.exists(save_path): os.remove(save_path)
+            
+            # --- MODIFIED SUCCESS MESSAGE ---
+            final_size = int(file.get('size', file_size)) # API se size lo, nahi to local use karo
             
             await status_msg.edit(
                 f"✅ **Upload Complete!**\n\n"
                 f"📂 `{file_name}`\n"
+                f"💾 **File Size:** {humanbytes(final_size)}\n"
                 f"🔗 [Download Link]({file.get('webContentLink')})", 
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Delete from Drive", callback_data=f"del_{file.get('id')}")]]))
             
@@ -302,4 +344,4 @@ if __name__ == "__main__":
     t.daemon = True
     t.start()
     app.run()
-    
+            
