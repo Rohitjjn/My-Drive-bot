@@ -6,6 +6,14 @@ import logging
 import threading
 import json
 import traceback
+
+# Setup a new event loop before importing pyrogram
+# to prevent 'no current event loop' errors during module initialization
+try:
+    asyncio.get_running_loop()
+except RuntimeError:
+    asyncio.set_event_loop(asyncio.new_event_loop())
+
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from google.oauth2.credentials import Credentials
