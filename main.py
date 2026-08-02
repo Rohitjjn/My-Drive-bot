@@ -17,17 +17,17 @@ from flask import Flask
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-API_ID = int(os.environ.get("API_ID"))
+API_ID = int(os.environ.get("API_ID", "0") or "0")
 API_HASH = os.environ.get("API_HASH")
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 
 # --- USER & FOLDER CONFIG ---
 # Admin 1 Config
-ADMIN_1_ID = int(os.environ.get("ADMIN_1_ID"))
+ADMIN_1_ID = int(os.environ.get("ADMIN_1_ID", "0") or "0")
 FOLDER_ID_1 = os.environ.get("FOLDER_ID_1") 
 
 # Admin 2 Config
-ADMIN_2_ID = int(os.environ.get("ADMIN_2_ID"))
+ADMIN_2_ID = int(os.environ.get("ADMIN_2_ID", "0") or "0")
 FOLDER_ID_2 = os.environ.get("FOLDER_ID_2") 
 
 AUTH_USERS = [ADMIN_1_ID, ADMIN_2_ID]
@@ -58,13 +58,13 @@ def get_user_config(user_id):
     return None, []
 
 # --- 4. DRIVE SERVICE SELECTOR ---
-def get_best_drive_service(allowed_account_ids, file_size_bytes):
+async def get_best_drive_service(allowed_account_ids, file_size_bytes):
     for acc_id in allowed_account_ids:
         if acc_id in tokens_map:
             account = tokens_map[acc_id]
             try:
                 service = account['service']
-                about = service.about().get(fields="storageQuota, user").execute()
+                about = await asyncio.to_thread(service.about().get(fields="storageQuota, user").execute)
                 quota = about.get('storageQuota', {})
                 limit = int(quota.get('limit', 0))
                 usage = int(quota.get('usage', 0))
@@ -78,7 +78,13 @@ def get_best_drive_service(allowed_account_ids, file_size_bytes):
 
 # --- 5. BOT SETUP ---
 app = Client("my_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
-upload_semaphore = asyncio.Semaphore(4)
+_upload_semaphore = None
+
+def get_upload_semaphore():
+    global _upload_semaphore
+    if _upload_semaphore is None:
+        _upload_semaphore = asyncio.Semaphore(4)
+    return _upload_semaphore
 
 # --- HELPERS (Formatting) ---
 def humanbytes(size):
@@ -130,10 +136,48 @@ async def progress_func(current, total, start_time, status_msg, file_name):
         except:
             pass
 
-# --- STATS COMMAND ---
-@app.on_message(filters.command("stats") & filters.user(AUTH_USERS))
-async def stats_handler(client, message):
-    user_id = message.from_user.id
+# --- NEW: START COMMAND ---
+@app.on_message(filters.command("start") & filters.user(AUTH_USERS))
+async def start_handler(client, message):
+    welcome_text = (
+        "👋 **Welcome to the Google Drive Uploader Bot!**\n\n"
+        "I can help you upload files directly to your Google Drive.\n"
+        "Use /help to see what I can do."
+    )
+    buttons = InlineKeyboardMarkup([
+        [InlineKeyboardButton("Help", callback_data="btn_help"), InlineKeyboardButton("Stats", callback_data="btn_stats")]
+    ])
+    await message.reply_text(welcome_text, reply_markup=buttons)
+
+async def send_help_text(message):
+    help_text = (
+        "🛠 **How to use me:**\n\n"
+        "1. Just send me any file or video.\n"
+        "2. I will automatically upload it to your designated Google Drive folder.\n\n"
+        "**Available Commands:**\n"
+        "🔹 /start - Start the bot\n"
+        "🔹 /help - Show this help message\n"
+        "🔹 /ping - Check bot latency\n"
+        "🔹 /stats - Check your Drive storage stats\n"
+        "🔹 /files - List all your uploaded files\n"
+    )
+    await message.reply_text(help_text)
+
+# --- NEW: HELP COMMAND ---
+@app.on_message(filters.command("help") & filters.user(AUTH_USERS))
+async def help_handler(client, message):
+    await send_help_text(message)
+
+# --- NEW: PING COMMAND ---
+@app.on_message(filters.command("ping") & filters.user(AUTH_USERS))
+async def ping_handler(client, message):
+    start_time = time.time()
+    ping_msg = await message.reply_text("🏓 **Pong!**")
+    end_time = time.time()
+    latency = round((end_time - start_time) * 1000, 2)
+    await ping_msg.edit(f"🏓 **Pong!**\nLatency: `{latency} ms`")
+
+async def send_stats(message, user_id):
     target_folder, allowed_ids = get_user_config(user_id)
     
     if not target_folder:
@@ -151,7 +195,7 @@ async def stats_handler(client, message):
             service = account['service']
             
             # 1. Storage Quota
-            about = service.about().get(fields="storageQuota").execute()
+            about = await asyncio.to_thread(service.about().get(fields="storageQuota").execute)
             quota = about.get('storageQuota', {})
             limit = int(quota.get('limit', 0))
             usage = int(quota.get('usage', 0))
@@ -163,7 +207,7 @@ async def stats_handler(client, message):
             page_token = None
             query = f"'{target_folder}' in parents and trashed = false"
             while True:
-                response = service.files().list(q=query, spaces='drive', fields='nextPageToken, files(id)', pageToken=page_token).execute()
+                response = await asyncio.to_thread(service.files().list(q=query, spaces='drive', fields='nextPageToken, files(id)', pageToken=page_token).execute)
                 files = response.get('files', [])
                 file_count += len(files)
                 page_token = response.get('nextPageToken')
@@ -181,6 +225,11 @@ async def stats_handler(client, message):
             await status_msg.edit(f"❌ Error fetching stats: {e}")
     else:
         await status_msg.edit("❌ Account not connected.")
+
+# --- STATS COMMAND ---
+@app.on_message(filters.command("stats") & filters.user(AUTH_USERS))
+async def stats_handler(client, message):
+    await send_stats(message, message.from_user.id)
 
 # --- NEW: FILES COMMAND (List All Files) ---
 @app.on_message(filters.command("files") & filters.user(AUTH_USERS))
@@ -205,12 +254,12 @@ async def list_files_handler(client, message):
             # Fetch all files (name, id, size, link)
             query = f"'{target_folder}' in parents and trashed = false"
             while True:
-                response = service.files().list(
+                response = await asyncio.to_thread(service.files().list(
                     q=query,
                     spaces='drive',
                     fields='nextPageToken, files(id, name, size, webContentLink)',
                     pageToken=page_token
-                ).execute()
+                ).execute)
                 files_found.extend(response.get('files', []))
                 page_token = response.get('nextPageToken')
                 if not page_token: break
@@ -239,7 +288,7 @@ async def list_files_handler(client, message):
                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Delete from Drive", callback_data=f"del_{f_id}")]])
                 )
                 # Anti-flood sleep (thoda gap taaki telegram block na kare)
-                time.sleep(0.5)
+                await asyncio.sleep(0.5)
 
         except Exception as e:
             await message.reply_text(f"❌ Error listing files: {e}")
@@ -262,13 +311,13 @@ async def upload_handler(client, message):
         await status_msg.edit("❌ Config Error.")
         return
 
-    best_service, email_used, free_space, acc_id = get_best_drive_service(allowed_accounts, file_size)
+    best_service, email_used, free_space, acc_id = await get_best_drive_service(allowed_accounts, file_size)
     
     if not best_service:
         await status_msg.edit(f"❌ **Storage Full!**")
         return
         
-    async with upload_semaphore:
+    async with get_upload_semaphore():
         await status_msg.edit(f"🚀 **Starting Upload...**\nAccount: {email_used}")
         save_path = f"downloads/{file_name}"
         if not os.path.exists("downloads"): os.makedirs("downloads")
@@ -280,9 +329,12 @@ async def upload_handler(client, message):
             await status_msg.edit(f"📤 **Finalizing Upload to Drive...**")
             
             file_metadata = {'name': file_name, 'parents': [target_folder_id]}
-            media = MediaIoBaseUpload(open(save_path, 'rb'), mimetype=message.video.mime_type if message.video else message.document.mime_type, resumable=True)
             
-            file = best_service.files().create(body=file_metadata, media_body=media, fields='id, webContentLink, size').execute()
+            def upload_file():
+                media = MediaIoBaseUpload(open(save_path, 'rb'), mimetype=message.video.mime_type if message.video else message.document.mime_type, resumable=True)
+                return best_service.files().create(body=file_metadata, media_body=media, fields='id, webContentLink, size').execute()
+
+            file = await asyncio.to_thread(upload_file)
             
             if os.path.exists(save_path): os.remove(save_path)
             
@@ -299,6 +351,18 @@ async def upload_handler(client, message):
         except Exception as e:
             await status_msg.edit(f"❌ Error: {e}")
             if os.path.exists(save_path): os.remove(save_path)
+
+# --- INLINE BUTTON HANDLERS ---
+@app.on_callback_query(filters.regex(r"^btn_help$"))
+async def btn_help_callback(client, callback_query):
+    await send_help_text(callback_query.message)
+    await callback_query.answer()
+
+@app.on_callback_query(filters.regex(r"^btn_stats$"))
+async def btn_stats_callback(client, callback_query):
+    # Retrieve user_id from the original user who clicked the button
+    await send_stats(callback_query.message, callback_query.from_user.id)
+    await callback_query.answer()
 
 # --- DELETE HANDLER ---
 @app.on_callback_query(filters.regex(r"^del_"))
@@ -318,7 +382,7 @@ async def delete_callback(client, callback_query):
             if acc_id in tokens_map:
                 try:
                     service = tokens_map[acc_id]['service']
-                    service.files().delete(fileId=file_id).execute()
+                    await asyncio.to_thread(service.files().delete(fileId=file_id).execute)
                     file_deleted = True
                     break
                 except: continue
