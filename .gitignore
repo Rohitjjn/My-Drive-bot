@@ -1,1 +1,3 @@
 my_bot.session
+__pycache__/
+*.pyc

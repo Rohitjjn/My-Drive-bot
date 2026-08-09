@@ -1,0 +1,30 @@
+WARNING:bot.config:❌ KOI TOKEN NAHI MILA! Check Render Config.
+INFO:bot.config:Bot starting...
+ * Serving Flask app 'main'
+ * Debug mode: off
+INFO:werkzeug:[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:8080
+ * Running on http://192.168.0.2:8080
+INFO:werkzeug:[33mPress CTRL+C to quit[0m
+Traceback (most recent call last):
+  File "/app/main.py", line 394, in <module>
+    main()
+  File "/app/main.py", line 391, in main
+    app.run()
+  File "/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/pyrogram/methods/utilities/run.py", line 84, in run
+    self.start()
+  File "/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/pyrogram/sync.py", line 66, in async_to_sync_wrap
+    return loop.run_until_complete(coroutine)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jules/.pyenv/versions/3.12.13/lib/python3.12/asyncio/base_events.py", line 691, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/pyrogram/methods/utilities/start.py", line 58, in start
+    is_authorized = await self.connect()
+                    ^^^^^^^^^^^^^^^^^^^^
+  File "/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/pyrogram/methods/auth/connect.py", line 40, in connect
+    await self.load_session()
+  File "/home/jules/.pyenv/versions/3.12.13/lib/python3.12/site-packages/pyrogram/client.py", line 627, in load_session
+    raise AttributeError("The API key is required for new authorizations. "
+AttributeError: The API key is required for new authorizations. More info: https://docs.pyrogram.org/start/auth
